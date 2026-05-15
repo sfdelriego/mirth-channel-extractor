@@ -1,0 +1,16 @@
+{
+  "obsidian_dir": "C:\\Users\\your_user\\YourVault\\Mirth\\Canales",
+  "repo_dir":     "C:\\repos\\mirth-js",
+
+  "replacements": {
+    "MY_HOSPITAL":   "Hospital",
+    "MY_HIS_SYSTEM": "HIS",
+    "MY_PACS":       "PACS"
+  },
+
+  "_comments": {
+    "obsidian_dir": "Carpeta dentro de tu vault de Obsidian donde se escriben las notas .md",
+    "repo_dir":     "Carpeta raiz del repositorio de ficheros JavaScript extraidos",
+    "replacements": "Diccionario de terminos a sustituir en los textos descriptivos. Las claves son las palabras originales (case-insensitive) y los valores son los reemplazos. Util para anonimizar el nombre del hospital, sistemas HIS, etc."
+  }
+}

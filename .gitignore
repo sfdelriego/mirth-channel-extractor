@@ -1,0 +1,9 @@
+# Config personal — contiene rutas locales, NO subir al repo
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
