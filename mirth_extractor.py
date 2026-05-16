@@ -37,32 +37,64 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # Mapeo de clases Java de conectores a nombres legibles
 CONNECTOR_TYPES = {
-    "FileReceiverProperties":        "File Reader",
-    "FileDispatcherProperties":      "File Writer",
-    "TcpReceiverProperties":         "TCP Listener (MLLP/HL7)",
-    "TcpSenderProperties":           "TCP Sender (MLLP/HL7)",
-    "HttpReceiverProperties":        "HTTP Listener",
-    "HttpDispatcherProperties":      "HTTP Sender",
-    "WebServiceReceiverProperties":  "Web Service Listener (SOAP)",
-    "WebServiceDispatcherProperties":"Web Service Sender (SOAP)",
-    "JavaScriptReceiverProperties":  "JavaScript Reader",
-    "JavaScriptDispatcherProperties":"JavaScript Writer",
-    "SmtpDispatcherProperties":      "SMTP (Email)",
-    "MllpReceiverProperties":        "MLLP Listener",
-    "MllpSenderProperties":          "MLLP Sender",
-    "VmReceiverProperties":          "Channel Reader",
-    "VmDispatcherProperties":        "Channel Writer",
-    "DatabaseReceiverProperties":    "Database Reader",
-    "DatabaseDispatcherProperties":  "Database Writer",
-    "DimseReceiverProperties":       "DICOM Listener",
-    "DimseSenderProperties":         "DICOM Sender",
-    "JmsReceiverProperties":         "JMS Listener",
-    "JmsSenderProperties":           "JMS Sender",
+    "FileReceiverProperties":         "File Reader",
+    "FileDispatcherProperties":       "File Writer",
+    "TcpReceiverProperties":          "TCP Listener (MLLP/HL7)",
+    "TcpSenderProperties":            "TCP Sender (MLLP/HL7)",
+    "HttpReceiverProperties":         "HTTP Listener",
+    "HttpDispatcherProperties":       "HTTP Sender",
+    "WebServiceReceiverProperties":   "Web Service Listener (SOAP)",
+    "WebServiceDispatcherProperties": "Web Service Sender (SOAP)",
+    "JavaScriptReceiverProperties":   "JavaScript Reader",
+    "JavaScriptDispatcherProperties": "JavaScript Writer",
+    "SmtpDispatcherProperties":       "SMTP (Email)",
+    "MllpReceiverProperties":         "MLLP Listener",
+    "MllpSenderProperties":           "MLLP Sender",
+    "VmReceiverProperties":           "Channel Reader",
+    "VmDispatcherProperties":         "Channel Writer",
+    "DatabaseReceiverProperties":     "Database Reader",
+    "DatabaseDispatcherProperties":   "Database Writer",
+    "DimseReceiverProperties":        "DICOM Listener",
+    "DimseSenderProperties":          "DICOM Sender",
+    "JmsReceiverProperties":          "JMS Listener",
+    "JmsSenderProperties":            "JMS Sender",
+}
+
+# Etiquetas legibles para propiedades del canal
+CHANNEL_PROPS_LABELS = {
+    "clearGlobalChannelMap": "Limpiar mapa canal",
+    "messageStorageMode":    "Almacenamiento mensajes",
+    "encryptData":           "Cifrar datos",
+    "initialState":          "Estado inicial",
+    "storeAttachments":      "Guardar adjuntos",
+    "enabled":               "Activo",
+    "revision":              "Revision",
+    "lastModified":          "Ultima modificacion",
+}
+
+# Etiquetas legibles para propiedades de conector TCP
+TCP_LABELS = {
+    "modePlugin":             "Modo transmision",
+    "useMLLPv2":              "MLLP v2",
+    "maxConnections":         "Max conexiones",
+    "keepConnectionOpen":     "Mantener conexion",
+    "charsetEncoding":        "Codificacion",
+    "dataTypeBinary":         "Datos binarios",
+    "respondOnNewConnection": "Responder en nueva conexion",
+}
+
+# Nombres legibles de los 4 scripts globales del canal
+CHANNEL_SCRIPT_LABELS = {
+    "preprocessingScript": "Pre-proceso",
+    "postprocessingScript": "Post-proceso",
+    "deployScript":         "Despliegue",
+    "undeployScript":       "Retirada",
 }
 
 # Patrones de credenciales a eliminar de los textos
@@ -95,7 +127,6 @@ def load_config(config_path: Path) -> dict:
         return {}
     with open(config_path, encoding="utf-8") as f:
         data = json.load(f)
-    # Filtrar claves internas de comentarios
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
@@ -108,8 +139,7 @@ def remove_credentials(text: str) -> str:
     lines = text.splitlines()
     clean_lines = []
     for line in lines:
-        skip = any(re.search(p, line) for p in CREDENTIAL_PATTERNS)
-        if not skip:
+        if not any(re.search(p, line) for p in CREDENTIAL_PATTERNS):
             clean_lines.append(line)
     return "\n".join(clean_lines).strip()
 
@@ -121,13 +151,11 @@ def apply_replacements(text: str, replacements: dict) -> str:
     """
     if not replacements:
         return text
-
     # Dividir en partes: indices pares = texto normal, impares = bloques de codigo
     parts = re.split(r"(```[\s\S]*?```)", text)
     result = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            # Texto normal: aplicar reemplazos
             for original, replacement in replacements.items():
                 part = re.sub(
                     rf"\b{re.escape(original)}\b",
@@ -149,10 +177,10 @@ def sanitize_text(text: str, replacements: dict) -> str:
 
 
 # =============================================================================
-# Parsing del XML
+# Parsing del XML — funciones auxiliares
 # =============================================================================
 
-def get_connector_type(props_elem):
+def get_connector_type(props_elem) -> str:
     """Devuelve el nombre legible del tipo de conector."""
     if props_elem is None:
         return "Unknown"
@@ -161,12 +189,13 @@ def get_connector_type(props_elem):
     return CONNECTOR_TYPES.get(short, short or "Unknown")
 
 
-def extract_scripts(container_elem):
+def extract_scripts(container_elem) -> list:
     """
     Extrae scripts JS de un nodo transformer o filter.
     Soporta el formato nuevo (steps/step, rules/rule)
     y el formato antiguo (elements/com.mirth...JavaScriptStep).
-    Devuelve lista de dicts: {name, script}
+    Devuelve lista de dicts: {name, script, operator}
+      - operator: "AND" / "OR" (solo en filtros) o None
     """
     results = []
     if container_elem is None:
@@ -174,27 +203,120 @@ def extract_scripts(container_elem):
 
     # Formato nuevo: .//step y .//rule con subelemento <script>
     for item in container_elem.findall(".//step") + container_elem.findall(".//rule"):
-        name_elem   = item.find("name")
-        script_elem = item.find("script")
+        name_elem     = item.find("name")
+        script_elem   = item.find("script")
+        operator_elem = item.find("operator")
         if script_elem is not None and script_elem.text and script_elem.text.strip():
             results.append({
-                "name":   name_elem.text if name_elem is not None else "Step",
-                "script": script_elem.text.strip(),
+                "name":     name_elem.text if name_elem is not None else "Step",
+                "script":   script_elem.text.strip(),
+                "operator": operator_elem.text if operator_elem is not None else None,
             })
 
     # Formato antiguo: elements/* con tag JavaScriptStep o JavaScriptRule
     for item in list(container_elem.find("elements") or []):
         if "JavaScriptStep" in item.tag or "JavaScriptRule" in item.tag:
-            name_elem   = item.find("name")
-            script_elem = item.find("script")
+            name_elem     = item.find("name")
+            script_elem   = item.find("script")
+            operator_elem = item.find("operator")
             if script_elem is not None and script_elem.text and script_elem.text.strip():
                 results.append({
-                    "name":   name_elem.text if name_elem is not None else item.tag.split(".")[-1],
-                    "script": script_elem.text.strip(),
+                    "name":     name_elem.text if name_elem is not None else item.tag.split(".")[-1],
+                    "script":   script_elem.text.strip(),
+                    "operator": operator_elem.text if operator_elem is not None else None,
                 })
 
     return results
 
+
+def _extract_data_types(transformer_elem) -> tuple[str, str]:
+    """Extrae inboundDataType y outboundDataType de un elemento transformer."""
+    if transformer_elem is None:
+        return "", ""
+    inbound  = transformer_elem.findtext("inboundDataType", "") or ""
+    outbound = transformer_elem.findtext("outboundDataType", "") or ""
+    return inbound, outbound
+
+
+def _extract_tcp_source_details(props_elem) -> dict:
+    """Extrae propiedades especificas de un source TCP Listener / MLLP."""
+    if props_elem is None:
+        return {}
+
+    details = {}
+
+    # Modo de transmision (MLLP, basico, etc.)
+    tm = props_elem.find("transmissionModeProperties")
+    if tm is not None:
+        class_attr = tm.get("class", "")
+        if "MLLP" in class_attr.upper():
+            details["modePlugin"] = "MLLP"
+            use_v2 = tm.findtext("useMLLPv2", "")
+            if use_v2:
+                details["useMLLPv2"] = use_v2
+        else:
+            plugin_name = class_attr.split(".")[-1].replace("ModeProperties", "")
+            if plugin_name:
+                details["modePlugin"] = plugin_name
+
+    for field in ("maxConnections", "keepConnectionOpen", "dataTypeBinary",
+                  "charsetEncoding", "respondOnNewConnection"):
+        val = props_elem.findtext(field, "")
+        if val:
+            details[field] = val
+
+    return details
+
+
+def _extract_channel_scripts(channel) -> dict:
+    """Extrae los 4 scripts globales del canal (pre/post proceso, deploy, undeploy)."""
+    scripts = {}
+    for name in ("preprocessingScript", "postprocessingScript", "deployScript", "undeployScript"):
+        text = (channel.findtext(name) or "").strip()
+        if text:
+            scripts[name] = text
+    return scripts
+
+
+def _extract_channel_properties(channel) -> tuple[dict, dict]:
+    """
+    Extrae propiedades del canal (<properties>) y metadatos de exportacion (<exportData>).
+    Devuelve dos dicts: (channel_props, export_meta).
+    """
+    channel_props = {}
+    props_elem = channel.find("properties")
+    if props_elem is not None:
+        for child in props_elem:
+            # Solo hojas simples (sin hijos) con texto
+            if len(list(child)) == 0 and child.text and child.text.strip():
+                channel_props[child.tag] = child.text.strip()
+
+    export_meta = {}
+    export_elem = channel.find("exportData")
+    if export_elem is not None:
+        metadata = export_elem.find("metadata")
+        if metadata is not None:
+            for child in metadata:
+                if len(list(child)) == 0 and child.text and child.text.strip():
+                    export_meta[child.tag] = child.text.strip()
+                elif child.tag == "lastModified":
+                    # Subelemento con <time> (epoch ms) y <timezone>
+                    time_val = child.findtext("time", "")
+                    tz_val   = child.findtext("timezone", "")
+                    if time_val:
+                        try:
+                            dt = datetime.fromtimestamp(int(time_val) / 1000, tz=timezone.utc)
+                            ts = dt.strftime("%Y-%m-%d %H:%M UTC")
+                            export_meta["lastModified"] = f"{ts} ({tz_val})" if tz_val else ts
+                        except Exception:
+                            export_meta["lastModified"] = time_val
+
+    return channel_props, export_meta
+
+
+# =============================================================================
+# Parsing principal del XML
+# =============================================================================
 
 def parse_channel(xml_path):
     """
@@ -227,6 +349,7 @@ def parse_channel(xml_path):
     source_scheme      = ""
     source_file_filter = ""
     source_port        = ""
+    source_tcp_details = {}
 
     if source is not None:
         props = source.find("properties")
@@ -234,15 +357,26 @@ def parse_channel(xml_path):
             source_scheme      = props.findtext("scheme", "")
             source_file_filter = props.findtext("fileFilter", "")
             source_port        = props.findtext("port", "")
+            if "TCP" in source_type or "MLLP" in source_type:
+                source_tcp_details = _extract_tcp_source_details(props)
 
-    src_transformer_scripts = extract_scripts(source.find("transformer") if source is not None else None)
-    src_filter_scripts      = extract_scripts(source.find("filter")      if source is not None else None)
+    # Data types del source (en el transformer)
+    src_transformer_elem = source.find("transformer") if source is not None else None
+    src_inbound_type, src_outbound_type = _extract_data_types(src_transformer_elem)
+
+    src_transformer_scripts = extract_scripts(src_transformer_elem)
+    src_filter_scripts      = extract_scripts(source.find("filter") if source is not None else None)
 
     # Destination connectors
     destinations = []
     for connector in channel.findall(".//destinationConnectors/connector"):
         dest_name = connector.findtext("name", "Destination")
         dest_type = get_connector_type(connector.find("properties"))
+        dest_enabled  = connector.findtext("enabled", "true")
+        dest_wait     = connector.findtext("waitForPrevious", "true")
+
+        dest_transformer_elem = connector.find("transformer")
+        dest_inbound_type, dest_outbound_type = _extract_data_types(dest_transformer_elem)
 
         # Script directo en properties (JavaScript Writer, Database Writer...)
         props_scripts = []
@@ -251,29 +385,46 @@ def parse_channel(xml_path):
             script_elem = props.find("script")
             if script_elem is not None and script_elem.text and script_elem.text.strip():
                 props_scripts.append({
-                    "name":   f"{dest_type} Script",
-                    "script": script_elem.text.strip(),
+                    "name":     f"{dest_type} Script",
+                    "script":   script_elem.text.strip(),
+                    "operator": None,
                 })
 
         destinations.append({
             "name":                dest_name,
             "type":                dest_type,
+            "enabled":             dest_enabled,
+            "waitForPrevious":     dest_wait,
+            "inboundDataType":     dest_inbound_type,
+            "outboundDataType":    dest_outbound_type,
             "filter_scripts":      extract_scripts(connector.find("filter")),
-            "transformer_scripts": extract_scripts(connector.find("transformer")),
+            "transformer_scripts": extract_scripts(dest_transformer_elem),
             "props_scripts":       props_scripts,
         })
 
+    # Scripts globales del canal
+    channel_scripts = _extract_channel_scripts(channel)
+
+    # Propiedades y metadatos de exportacion
+    channel_props, export_meta = _extract_channel_properties(channel)
+
     return {
-        "name":                      name,
-        "description":               description,
-        "version":                   version,
-        "source_type":               source_type,
-        "source_scheme":             source_scheme,
-        "source_file_filter":        source_file_filter,
-        "source_port":               source_port,
+        "name":                       name,
+        "description":                description,
+        "version":                    version,
+        "source_type":                source_type,
+        "source_scheme":              source_scheme,
+        "source_file_filter":         source_file_filter,
+        "source_port":                source_port,
+        "source_tcp_details":         source_tcp_details,
+        "src_inbound_type":           src_inbound_type,
+        "src_outbound_type":          src_outbound_type,
         "source_transformer_scripts": src_transformer_scripts,
-        "source_filter_scripts":     src_filter_scripts,
-        "destinations":              destinations,
+        "source_filter_scripts":      src_filter_scripts,
+        "destinations":               destinations,
+        "channel_scripts":            channel_scripts,
+        "channel_props":              channel_props,
+        "export_meta":                export_meta,
     }
 
 
@@ -281,7 +432,7 @@ def parse_channel(xml_path):
 # Generacion de contenido
 # =============================================================================
 
-def generate_auto_description(ch):
+def generate_auto_description(ch) -> str:
     """
     Genera una descripcion funcional automatica basada en los datos del canal.
     Sirve como borrador cuando no hay descripcion en el XML.
@@ -289,7 +440,6 @@ def generate_auto_description(ch):
     src   = ch["source_type"]
     dests = ch["destinations"]
 
-    # Informacion del source
     src_detail = src
     if ch["source_scheme"]:
         src_detail += f" ({ch['source_scheme']})"
@@ -298,20 +448,19 @@ def generate_auto_description(ch):
     if ch["source_port"]:
         src_detail += f", puerto: {ch['source_port']}"
 
-    # Tipos de destinations unicos
-    dest_types = list(dict.fromkeys(d["type"] for d in dests))
-    dest_names = [d["name"] for d in dests]
+    dest_types  = list(dict.fromkeys(d["type"] for d in dests))
+    dest_names  = [d["name"] for d in dests]
+    src_steps   = [s["name"] for s in ch["source_filter_scripts"] + ch["source_transformer_scripts"]]
+    src_steps_clean = [
+        s for s in src_steps
+        if s and s.lower() not in ("step", "rule", "filter rule", "transformer step")
+    ]
+    dest_ops = [
+        d for d in dest_names
+        if d and d.lower() not in ("destination 1", "destination 2", "destination 3")
+    ]
 
-    # Nombres de steps del source transformer/filter (los mas descriptivos)
-    src_steps = [s["name"] for s in ch["source_filter_scripts"] + ch["source_transformer_scripts"]]
-    src_steps_clean = [s for s in src_steps if s and s.lower() not in ("step", "rule", "filter rule", "transformer step")]
-
-    # Nombres de destinations (suelen describir la logica)
-    dest_ops = [d for d in dest_names if d and d.lower() not in ("destination 1", "destination 2", "destination 3")]
-
-    # Componer descripcion
     lines = []
-
     if "Reader" in src or "Listener" in src:
         lines.append(f"Canal con entrada {src_detail}.")
     else:
@@ -326,9 +475,8 @@ def generate_auto_description(ch):
     if dest_types:
         lines.append(f"Salida via: {', '.join(dict.fromkeys(dest_types))}.")
 
-    desc = " ".join(lines)
+    desc  = " ".join(lines)
     desc += "\n\n> [!todo] Descripcion generada automaticamente — revisar y completar."
-
     return desc
 
 
@@ -338,47 +486,68 @@ def build_description(ch, replacements: dict) -> str:
     Si no, genera una automatica.
     """
     raw = ch["description"]
-
     if raw and len(raw.strip()) > 20:
         cleaned = sanitize_text(raw, replacements)
         if len(cleaned) > 20:
             return cleaned
-
     return generate_auto_description(ch)
 
 
 # =============================================================================
-# Escritura de salida
+# Escritura de la nota Obsidian
 # =============================================================================
+
+def _bool_icon(value: str) -> str:
+    """Convierte 'true'/'false' en icono."""
+    return "✓" if value.lower() == "true" else "✗"
+
 
 def write_obsidian_note(ch, output_path, replacements: dict, repo_dir: Path, deprecated=False):
     """Genera y escribe la nota Obsidian en formato Markdown."""
     lines = []
 
-    # Frontmatter
+    # --- Frontmatter ---
     lines += ["---", "tags:", "  - mirth", "  - canal"]
     if deprecated:
         lines.append("  - deprecated")
     lines += ["---", ""]
 
-    # Titulo
+    # --- Titulo ---
     lines.append(f"# {ch['name']}")
     lines.append("")
 
     if deprecated:
         lines += ["> [!warning] Canal deprecado", ""]
 
-    # Descripcion
-    lines.append("## Descripcion")
-    lines.append("")
+    # --- Propiedades del canal y metadatos de exportacion ---
+    ch_props   = ch.get("channel_props", {})
+    exp_meta   = ch.get("export_meta", {})
+    if ch_props or exp_meta:
+        lines += ["## Propiedades del canal", ""]
+        if ch_props:
+            lines += ["| Propiedad | Valor |", "|---|---|"]
+            for k, v in ch_props.items():
+                lines.append(f"| {CHANNEL_PROPS_LABELS.get(k, k)} | {v} |")
+            lines.append("")
+        if exp_meta:
+            lines += ["| Metadato | Valor |", "|---|---|"]
+            for k, v in exp_meta.items():
+                lines.append(f"| {CHANNEL_PROPS_LABELS.get(k, k)} | {v} |")
+            lines.append("")
+
+    # --- Descripcion ---
+    lines += ["## Descripcion", ""]
     lines.append(build_description(ch, replacements))
     lines.append("")
 
-    # Configuracion
-    lines.append("## Configuracion")
-    lines.append("")
+    # --- Configuracion general ---
+    lines += ["## Configuracion", ""]
     lines += ["| Campo | Valor |", "|---|---|"]
     lines.append(f"| **Source** | {ch['source_type']} |")
+    if ch["src_inbound_type"]:
+        lines.append(f"| **Inbound** | {ch['src_inbound_type']} |")
+    if ch["src_outbound_type"]:
+        lines.append(f"| **Outbound** | {ch['src_outbound_type']} |")
     if ch["source_scheme"]:
         lines.append(f"| **Protocolo** | {ch['source_scheme']} |")
     if ch["source_file_filter"]:
@@ -389,45 +558,70 @@ def write_obsidian_note(ch, output_path, replacements: dict, repo_dir: Path, dep
     lines.append(f"| **Destinations** | {len(ch['destinations'])} |")
     lines.append("")
 
-    # Destinations
-    if ch["destinations"]:
-        lines.append("## Destinations")
-        lines.append("")
-        lines += ["| Nombre | Tipo |", "|---|---|"]
-        for d in ch["destinations"]:
-            lines.append(f"| {d['name']} | {d['type']} |")
+    # --- Configuracion especifica del source TCP/MLLP ---
+    tcp = ch.get("source_tcp_details", {})
+    if tcp:
+        lines += [f"## Configuracion {ch['source_type']}", ""]
+        lines += ["| Parametro | Valor |", "|---|---|"]
+        for k, v in tcp.items():
+            lines.append(f"| {TCP_LABELS.get(k, k)} | {v} |")
         lines.append("")
 
-    # Scripts del source
+    # --- Tabla de destinations ---
+    if ch["destinations"]:
+        lines += ["## Destinations", ""]
+        lines += ["| Nombre | Tipo | Inbound | Outbound | Activo | Espera ant. |",
+                  "|---|---|---|---|---|---|"]
+        for d in ch["destinations"]:
+            lines.append(
+                f"| {d['name']} | {d['type']} "
+                f"| {d['inboundDataType']} | {d['outboundDataType']} "
+                f"| {_bool_icon(d['enabled'])} | {_bool_icon(d['waitForPrevious'])} |"
+            )
+        lines.append("")
+
+    # --- Scripts globales del canal ---
+    ch_scripts = ch.get("channel_scripts", {})
+    if ch_scripts:
+        lines += ["## Scripts — Canal", ""]
+        for key, label in CHANNEL_SCRIPT_LABELS.items():
+            if key in ch_scripts:
+                lines += [f"### {label}", "", "```javascript", ch_scripts[key], "```", ""]
+
+    # --- Scripts del source ---
     all_src = ch["source_filter_scripts"] + ch["source_transformer_scripts"]
     if all_src:
-        lines.append("## Scripts — Source")
-        lines.append("")
+        lines += ["## Scripts — Source", ""]
         for s in ch["source_filter_scripts"]:
-            lines += [f"### Filter: {s['name']}", "", "```javascript", s["script"], "```", ""]
+            op_tag = f" `[{s['operator']}]`" if s.get("operator") else ""
+            lines += [f"### Filter{op_tag}: {s['name']}", "", "```javascript", s["script"], "```", ""]
         for s in ch["source_transformer_scripts"]:
             lines += [f"### Transformer: {s['name']}", "", "```javascript", s["script"], "```", ""]
 
-    # Scripts de cada destination
+    # --- Scripts de cada destination ---
     for d in ch["destinations"]:
         all_d = d["filter_scripts"] + d["transformer_scripts"] + d["props_scripts"]
         if all_d:
-            lines.append(f"## Scripts — {d['name']} ({d['type']})")
-            lines.append("")
+            lines += [f"## Scripts — {d['name']} ({d['type']})", ""]
             for s in d["filter_scripts"]:
-                lines += [f"### Filter: {s['name']}", "", "```javascript", s["script"], "```", ""]
+                op_tag = f" `[{s['operator']}]`" if s.get("operator") else ""
+                lines += [f"### Filter{op_tag}: {s['name']}", "", "```javascript", s["script"], "```", ""]
             for s in d["transformer_scripts"]:
                 lines += [f"### Transformer: {s['name']}", "", "```javascript", s["script"], "```", ""]
             for s in d["props_scripts"]:
                 lines += [f"### {s['name']}", "", "```javascript", s["script"], "```", ""]
 
-    # Enlace al repo
+    # --- Enlace al repo JS ---
     repo_path = str(repo_dir / ch["name"])
     lines += ["---", f"**Codigo JS:** `{repo_path}`"]
 
     content = "\n".join(lines)
     output_path.write_text(content, encoding="utf-8")
 
+
+# =============================================================================
+# Escritura de ficheros JS
+# =============================================================================
 
 def write_js_files(ch, channel_repo_dir):
     """Escribe los ficheros .js del canal en el directorio del repositorio."""
@@ -461,6 +655,10 @@ def write_js_files(ch, channel_repo_dir):
                 join_scripts(dest["props_scripts"], "Script"), encoding="utf-8")
 
 
+# =============================================================================
+# Procesado de un canal
+# =============================================================================
+
 def _count_scripts(ch) -> int:
     return (
         len(ch["source_filter_scripts"]) +
@@ -483,18 +681,20 @@ def process_file(xml_path, obsidian_dir, repo_dir, replacements: dict, deprecate
 
     total_scripts = _count_scripts(ch)
 
-    # Nota Obsidian
-    suffix = " (deprecated)" if deprecated else ""
+    suffix    = " (deprecated)" if deprecated else ""
     note_path = obsidian_dir / f"{ch['name']}{suffix}.md"
     write_obsidian_note(ch, note_path, replacements, repo_dir, deprecated)
 
-    # JS repo
     repo_subdir = repo_dir / ("_Deprecated" if deprecated else "") / ch["name"]
     write_js_files(ch, repo_subdir)
 
     print(f"OK ({total_scripts} scripts JS, {len(ch['destinations'])} destinations)")
     return ch
 
+
+# =============================================================================
+# Inventario
+# =============================================================================
 
 def update_inventory(channels, obsidian_dir, repo_dir):
     """Genera o actualiza el fichero INVENTORY.md."""
@@ -534,12 +734,9 @@ def update_inventory(channels, obsidian_dir, repo_dir):
 
     content = "\n".join(lines)
 
-    # Obsidian (con wikilinks)
-    inv_obs = obsidian_dir.parent / "Canales Mirth - Inventario.md"
-    inv_obs.write_text(content, encoding="utf-8")
-
-    # Repo (sin wikilinks)
+    inv_obs  = obsidian_dir.parent / "Canales Mirth - Inventario.md"
     inv_repo = repo_dir / "INVENTORY.md"
+    inv_obs.write_text(content, encoding="utf-8")
     inv_repo.write_text(content.replace("[[", "").replace("]]", ""), encoding="utf-8")
 
     print(f"\n  Inventario actualizado: {inv_obs.name}")
@@ -548,8 +745,8 @@ def update_inventory(channels, obsidian_dir, repo_dir):
 # =============================================================================
 # Punto de entrada
 # =============================================================================
+
 def main():
-    # Localizar config.json en el mismo directorio que el script
     script_dir  = Path(__file__).parent
     config_path = script_dir / "config.json"
 
@@ -591,7 +788,6 @@ def main():
     cfg          = load_config(Path(args.config))
     replacements = cfg.get("replacements", {})
 
-    # Las rutas CLI tienen prioridad sobre el config; si ninguna da valor, error
     obsidian_str = args.obsidian or cfg.get("obsidian_dir")
     repo_str     = args.repo     or cfg.get("repo_dir")
 
@@ -609,7 +805,6 @@ def main():
     obsidian_dir.mkdir(parents=True, exist_ok=True)
     repo_dir.mkdir(parents=True, exist_ok=True)
 
-    # Recopilar XMLs a procesar
     if input_path.is_file():
         xml_files = [input_path]
     elif input_path.is_dir():
@@ -624,17 +819,16 @@ def main():
 
     repl_summary = ", ".join(f"{k}->{v}" for k, v in replacements.items()) if replacements else "(ninguno)"
     print(f"\nMirth Extractor")
-    print(f"  Input        : {input_path}")
-    print(f"  Obsidian     : {obsidian_dir}")
-    print(f"  Repo         : {repo_dir}")
-    print(f"  Reemplazos   : {repl_summary}")
-    print(f"  XMLs         : {len(xml_files)} encontrados")
+    print(f"  Input      : {input_path}")
+    print(f"  Obsidian   : {obsidian_dir}")
+    print(f"  Repo       : {repo_dir}")
+    print(f"  Reemplazos : {repl_summary}")
+    print(f"  XMLs       : {len(xml_files)} encontrados")
     print()
 
     processed  = []
     seen_names = set()
 
-    # Procesar canales activos
     for xml_file in xml_files:
         ch = process_file(xml_file, obsidian_dir, repo_dir, replacements, args.deprecated)
         if ch and ch["name"] not in seen_names:
@@ -647,7 +841,6 @@ def main():
             ch["deprecated"]    = args.deprecated
             processed.append(ch)
 
-    # Procesar deprecated si estamos procesando una carpeta
     if input_path.is_dir():
         dep_dir = input_path / "Deprecated"
         if dep_dir.exists():
@@ -664,7 +857,6 @@ def main():
                     ch["deprecated"]    = True
                     processed.append(ch)
 
-    # Inventario
     if not args.no_inventory and processed:
         update_inventory(processed, obsidian_dir, repo_dir)
 
