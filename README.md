@@ -271,9 +271,8 @@ var params = java.util.Arrays.asList($('firstName'), $('lastName'), $('nhc'));
 // ...
 ```
 
----
 **Codigo JS:** `C:\repos\mirth-js\TCP_ADT-DB`
-
+````
 ---
 
 ## 🔐 Limpieza automática de credenciales
