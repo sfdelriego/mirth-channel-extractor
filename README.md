@@ -1,6 +1,6 @@
 # 🏥 Mirth Channel Extractor
 
-> Convierte exportaciones XML de canales **Mirth Connect** en notas **Obsidian** estructuradas y un repositorio de **código JavaScript** reutilizable.
+> Convierte exportaciones XML de canales **Mirth Connect** en notas **markdown** estructuradas y un repositorio de **código JavaScript** reutilizable.
 
 Ideal para equipos de integración sanitaria que quieren documentar, buscar y reutilizar la lógica de sus canales HL7/FHIR sin tener que abrir Mirth cada vez.
 
