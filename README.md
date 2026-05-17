@@ -1,6 +1,6 @@
 # 🏥 Mirth Channel Extractor
 
-> Convierte exportaciones XML de canales **Mirth Connect** en notas **Obsidian** estructuradas y un repositorio de **código JavaScript** reutilizable.
+> Convierte exportaciones XML de canales **Mirth Connect** en notas **markdown** estructuradas y un repositorio de **código JavaScript** reutilizable.
 
 Ideal para equipos de integración sanitaria que quieren documentar, buscar y reutilizar la lógica de sus canales HL7/FHIR sin tener que abrir Mirth cada vez.
 
@@ -10,7 +10,7 @@ Ideal para equipos de integración sanitaria que quieren documentar, buscar y re
 
 Si trabajas con **Mirth Connect** sabes que el código JavaScript de los filtros y transformers está "atrapado" dentro del XML de cada canal. Este script los extrae en fichero individuales para poder tener une repositorio y reutilizar código:
 
-- 📝 **Genera una nota Obsidian** por canal con descripción funcional, propiedades, configuración TCP, tipo de conectores y todo el código JS en bloques con syntax highlight
+- 📝 **Genera una nota markdown** por canal con descripción funcional, propiedades, configuración TCP, tipo de conectores y todo el código JS en bloques con syntax highlight
 - 🗂️ **Organiza el JavaScript** en ficheros `.js` separados por canal y componente (source transformer, filtros, destinations...)
 - 📋 **Crea un inventario** con tabla de todos los canales procesados
 - 🔒 **Elimina credenciales** automáticamente (IPs, passwords, usuarios) de las descripciones
@@ -152,11 +152,11 @@ Con el comportamiento por defecto (`rename_by_connectors: false`) el nombre del 
         └── 📄 source_transformer.js
 ```
 
-> 💡 En la carpeta [`channel-example/`](channel-example/) del repositorio encontrarás un canal de ejemplo completo: XML de exportación, nota Obsidian generada y ficheros JS.
+> 💡 En la carpeta [`channel-example/`](channel-example/) del repositorio encontrarás un canal de ejemplo completo: XML de exportación, nota markdown generada y ficheros JS.
 
 ---
 
-## 📄 Ejemplo de nota Obsidian generada
+## 📄 Ejemplo de nota markdown generada
 
 > Ver también el ejemplo completo en [`channel-example/TCP_ADT-DB.md`](channel-example/TCP_ADT-DB.md).
 
@@ -348,7 +348,7 @@ El script detecta automáticamente cuál usa cada canal y los procesa correctame
 1. Abre el canal en Mirth Connect y entiende qué hace
 2. Exporta el canal: Admin → Export Channel → guarda el XML
 3. Ejecuta el script sobre el XML exportado
-4. Abre la nota en Obsidian y mejora la descripción auto-generada
+4. Abre la nota markdown y mejora la descripción auto-generada
 5. (Opcional) Sube el repositorio JS a GitHub para compartirlo
 ```
 
