@@ -40,7 +40,7 @@ cp config.example.json config.json
 
 ```json
 {
-  "obsidian_dir": "C:\\Users\\tu_usuario\\Vault\\Mirth\\Canales",
+  "obsidian_dir": "C:\\Vault\\Mirth\\Canales",
   "repo_dir":     "C:\\repos\\mirth-js",
 
   "replacements": {

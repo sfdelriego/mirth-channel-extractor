@@ -3,8 +3,8 @@
 mirth_extractor.py
 ==================
 Procesa exportaciones XML de canales Mirth Connect y genera:
-  - Notas Obsidian (.md) con descripcion, configuracion y codigo JS
-  - Ficheros .js organizados por canal en un repositorio
+- Notas Obsidian (.md) con descripcion, configuracion y codigo JS
+- Ficheros .js organizados por canal en un repositorio
 
 Uso:
     # Un solo canal:
@@ -21,12 +21,12 @@ Uso:
 
 Configuracion (fichero config.json junto al script):
     {
-      "obsidian_dir": "C:/Users/tu_usuario/Vault/Mirth/Canales",
-      "repo_dir":     "C:/repos/mirth-js",
-      "replacements": {
-        "MiHospital": "Hospital",
-        "MiHIS":      "HIS"
-      }
+        "obsidian_dir": "C:/Users/tu_usuario/Vault/Mirth/Canales",
+        "repo_dir":     "C:/repos/mirth-js",
+        "replacements": {
+            "MiHospital": "Hospital",
+            "MiHIS":      "HIS"
+        }
     }
 
     Copia config.example.json a config.json y edita los valores.
@@ -91,10 +91,10 @@ TCP_LABELS = {
 
 # Nombres legibles de los 4 scripts globales del canal
 CHANNEL_SCRIPT_LABELS = {
-    "preprocessingScript": "Pre-proceso",
-    "postprocessingScript": "Post-proceso",
-    "deployScript":         "Despliegue",
-    "undeployScript":       "Retirada",
+    "preprocessingScript": "Preprocessor",
+    "postprocessingScript": "Postprocessor",
+    "deployScript":         "Deploy",
+    "undeployScript":       "Undeploy",
 }
 
 # Patrones de credenciales a eliminar de los textos
@@ -170,8 +170,8 @@ def apply_replacements(text: str, replacements: dict) -> str:
 def sanitize_text(text: str, replacements: dict) -> str:
     """
     Limpia el texto:
-      - Elimina lineas con credenciales (IPs, passwords, logins)
-      - Aplica el diccionario de reemplazos (anonimizacion de hospital, etc.)
+    - Elimina lineas con credenciales (IPs, passwords, logins)
+    - Aplica el diccionario de reemplazos (anonimizacion de hospital, etc.)
     """
     return apply_replacements(remove_credentials(text), replacements)
 
@@ -195,7 +195,7 @@ def extract_scripts(container_elem) -> list:
     Soporta el formato nuevo (steps/step, rules/rule)
     y el formato antiguo (elements/com.mirth...JavaScriptStep).
     Devuelve lista de dicts: {name, script, operator}
-      - operator: "AND" / "OR" (solo en filtros) o None
+    - operator: "AND" / "OR" (solo en filtros) o None
     """
     results = []
     if container_elem is None:
@@ -214,7 +214,8 @@ def extract_scripts(container_elem) -> list:
             })
 
     # Formato antiguo: elements/* con tag JavaScriptStep o JavaScriptRule
-    for item in list(container_elem.find("elements") or []):
+    elements_node = container_elem.find("elements")
+    for item in (list(elements_node) if elements_node is not None else []):
         if "JavaScriptStep" in item.tag or "JavaScriptRule" in item.tag:
             name_elem     = item.find("name")
             script_elem   = item.find("script")
@@ -259,8 +260,7 @@ def _extract_tcp_source_details(props_elem) -> dict:
             if plugin_name:
                 details["modePlugin"] = plugin_name
 
-    for field in ("maxConnections", "keepConnectionOpen", "dataTypeBinary",
-                  "charsetEncoding", "respondOnNewConnection"):
+    for field in ("maxConnections", "keepConnectionOpen", "dataTypeBinary", "charsetEncoding", "respondOnNewConnection"):
         val = props_elem.findtext(field, "")
         if val:
             details[field] = val
@@ -570,8 +570,7 @@ def write_obsidian_note(ch, output_path, replacements: dict, repo_dir: Path, dep
     # --- Tabla de destinations ---
     if ch["destinations"]:
         lines += ["## Destinations", ""]
-        lines += ["| Nombre | Tipo | Inbound | Outbound | Activo | Espera ant. |",
-                  "|---|---|---|---|---|---|"]
+        lines += ["| Nombre | Tipo | Inbound | Outbound | Activo | Espera ant. |", "|---|---|---|---|---|---|"]
         for d in ch["destinations"]:
             lines.append(
                 f"| {d['name']} | {d['type']} "
