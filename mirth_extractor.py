@@ -110,6 +110,12 @@ CREDENTIAL_PATTERNS = [
     r'(?i)Test U:.*',                                       # lineas de credenciales de test
 ]
 
+# Tipos de mensaje HL7 reconocidos para incluir en el nombre por conectores
+HL7_MESSAGE_TYPES = [
+    "ADT", "SIU", "ORM", "ORU", "MDM", "QBP", "RSP",
+    "MFN", "DFT", "BAR", "ACK", "REF", "RAS", "RDS",
+]
+
 
 # =============================================================================
 # Carga de configuracion
@@ -174,6 +180,88 @@ def sanitize_text(text: str, replacements: dict) -> str:
     - Aplica el diccionario de reemplazos (anonimizacion de hospital, etc.)
     """
     return apply_replacements(remove_credentials(text), replacements)
+
+
+# =============================================================================
+# Generacion de nombre por conectores
+# =============================================================================
+
+def _file_abbrev(prefix: str, scheme: str) -> str:
+    """Devuelve el sufijo de protocolo para conectores File (Reader/Writer)."""
+    s = scheme.upper()
+    if "SFTP" in s or "SCP" in s:
+        return f"{prefix}_SFTP"
+    if "FTP" in s:
+        return f"{prefix}_FTP"
+    if "SMB" in s or "SAMBA" in s:
+        return f"{prefix}_SMB"
+    return f"{prefix}_LOCAL"
+
+
+def _abbrev_connector(connector_type: str, scheme: str = "") -> str:
+    """
+    Devuelve la abreviatura de un tipo de conector.
+    Ejemplos: 'TCP Listener (MLLP/HL7)' -> 'TCP',
+              'File Reader' (scheme=SFTP)  -> 'FR_SFTP',
+              'JavaScript Writer'          -> 'JS'
+    """
+    if "File Reader" in connector_type:
+        return _file_abbrev("FR", scheme)
+    if "File Writer" in connector_type:
+        return _file_abbrev("FW", scheme)
+    for key, abbrev in [
+        ("TCP",          "TCP"),
+        ("MLLP",         "TCP"),
+        ("HTTP",         "HTTP"),
+        ("Web Service",  "WS"),
+        ("JavaScript",   "JS"),
+        ("Database",     "DB"),
+        ("Channel",      "CH"),
+        ("SMTP",         "SMTP"),
+        ("DICOM",        "DICOM"),
+        ("JMS",          "JMS"),
+    ]:
+        if key in connector_type:
+            return abbrev
+    # Fallback: primera palabra en mayusculas
+    return connector_type.split()[0].upper()[:8]
+
+
+def generate_name_by_connectors(ch: dict) -> str:
+    """
+    Genera un nombre de canal basado en los tipos de conectores.
+    Formato: {SOURCE}[_MSGTYPE]-{DEST1[_DEST2]} o {SOURCE}-ROUTER si >2 destinos distintos.
+    Ejemplos:
+      TCP_ADT-DB          <- TCP listener con ADT + un destino DB
+      FR_SFTP-FW_SMB      <- File Reader SFTP -> File Writer SMB
+      HTTP-JS             <- HTTP Listener -> JavaScript Writer
+      TCP-ROUTER          <- TCP con mas de 2 tipos de destino distintos
+    """
+    src_abbrev = _abbrev_connector(ch["source_type"], ch.get("source_scheme", ""))
+
+    # Intentar detectar tipo de mensaje HL7 en el nombre original
+    if src_abbrev in ("TCP", "MLLP", "HTTP"):
+        name_upper = ch["name"].upper()
+        for msg in HL7_MESSAGE_TYPES:
+            if msg in name_upper:
+                src_abbrev += f"_{msg}"
+                break
+
+    dests = ch.get("destinations", [])
+    if not dests:
+        return src_abbrev
+
+    # Abreviaturas unicas preservando orden
+    dest_abbrevs = list(dict.fromkeys(
+        _abbrev_connector(d["type"], d.get("scheme", "")) for d in dests
+    ))
+
+    if len(dest_abbrevs) > 2:
+        dest_part = "ROUTER"
+    else:
+        dest_part = "_".join(dest_abbrevs)
+
+    return f"{src_abbrev}-{dest_part}"
 
 
 # =============================================================================
@@ -378,11 +466,14 @@ def parse_channel(xml_path):
         dest_transformer_elem = connector.find("transformer")
         dest_inbound_type, dest_outbound_type = _extract_data_types(dest_transformer_elem)
 
+        # Protocolo/esquema del conector de destino (para File Writer, etc.)
+        dest_props = connector.find("properties")
+        dest_scheme = dest_props.findtext("scheme", "") if dest_props is not None else ""
+
         # Script directo en properties (JavaScript Writer, Database Writer...)
         props_scripts = []
-        props = connector.find("properties")
-        if props is not None:
-            script_elem = props.find("script")
+        if dest_props is not None:
+            script_elem = dest_props.find("script")
             if script_elem is not None and script_elem.text and script_elem.text.strip():
                 props_scripts.append({
                     "name":     f"{dest_type} Script",
@@ -393,6 +484,7 @@ def parse_channel(xml_path):
         destinations.append({
             "name":                dest_name,
             "type":                dest_type,
+            "scheme":              dest_scheme,
             "enabled":             dest_enabled,
             "waitForPrevious":     dest_wait,
             "inboundDataType":     dest_inbound_type,
@@ -513,7 +605,10 @@ def write_obsidian_note(ch, output_path, replacements: dict, repo_dir: Path, dep
     lines += ["---", ""]
 
     # --- Titulo ---
-    lines.append(f"# {ch['name']}")
+    output_name = ch.get("output_name", ch["name"])
+    lines.append(f"# {output_name}")
+    if output_name != ch["name"]:
+        lines.append(f"*Canal original: `{ch['name']}`*")
     lines.append("")
 
     if deprecated:
@@ -611,7 +706,8 @@ def write_obsidian_note(ch, output_path, replacements: dict, repo_dir: Path, dep
                 lines += [f"### {s['name']}", "", "```javascript", s["script"], "```", ""]
 
     # --- Enlace al repo JS ---
-    repo_path = str(repo_dir / ch["name"])
+    output_name = ch.get("output_name", ch["name"])
+    repo_path = str(repo_dir / output_name)
     lines += ["---", f"**Codigo JS:** `{repo_path}`"]
 
     content = "\n".join(lines)
@@ -669,8 +765,23 @@ def _count_scripts(ch) -> int:
     )
 
 
-def process_file(xml_path, obsidian_dir, repo_dir, replacements: dict, deprecated=False):
-    """Procesa un unico fichero XML de canal."""
+def process_file(
+    xml_path,
+    obsidian_dir,
+    repo_dir,
+    replacements: dict,
+    deprecated=False,
+    rename_by_connectors: bool = False,
+    used_names: dict = None,
+):
+    """
+    Procesa un unico fichero XML de canal.
+
+    Si rename_by_connectors=True, el nombre del canal en las notas y el repo
+    se genera a partir de los tipos de conectores (p.ej. 'TCP_ADT-DB') en lugar
+    del nombre original del XML.  El parametro used_names es un dict mutable
+    {base_name -> count} para resolver colisiones entre canales.
+    """
     print(f"  Procesando: {xml_path.name} ... ", end="")
 
     ch = parse_channel(xml_path)
@@ -678,16 +789,31 @@ def process_file(xml_path, obsidian_dir, repo_dir, replacements: dict, deprecate
         print("ERROR (XML invalido o sin canal)")
         return None
 
+    # Calcular el nombre de salida
+    if rename_by_connectors:
+        base = generate_name_by_connectors(ch)
+        if used_names is None:
+            used_names = {}
+        if base not in used_names:
+            used_names[base] = 0
+            output_name = base
+        else:
+            used_names[base] += 1
+            output_name = f"{base}_{used_names[base]}"
+        ch["output_name"] = output_name
+    else:
+        ch["output_name"] = ch["name"]
+
     total_scripts = _count_scripts(ch)
 
     suffix    = " (deprecated)" if deprecated else ""
-    note_path = obsidian_dir / f"{ch['name']}{suffix}.md"
+    note_path = obsidian_dir / f"{ch['output_name']}{suffix}.md"
     write_obsidian_note(ch, note_path, replacements, repo_dir, deprecated)
 
-    repo_subdir = repo_dir / ("_Deprecated" if deprecated else "") / ch["name"]
+    repo_subdir = repo_dir / ("_Deprecated" if deprecated else "") / ch["output_name"]
     write_js_files(ch, repo_subdir)
 
-    print(f"OK ({total_scripts} scripts JS, {len(ch['destinations'])} destinations)")
+    print(f"OK  {ch['output_name']}  ({total_scripts} scripts JS, {len(ch['destinations'])} destinations)")
     return ch
 
 
@@ -712,10 +838,11 @@ def update_inventory(channels, obsidian_dir, repo_dir):
         for c in channel_list:
             desc  = c.get("desc_short", "")
             total = c.get("total_scripts", 0)
+            oname = c.get("output_name", c["name"])
             if include_desc:
-                rows.append(f"| [[{c['name']}]] | {c['source_type']} | {len(c['destinations'])} | {total} | {desc} |")
+                rows.append(f"| [[{oname}]] | {c['source_type']} | {len(c['destinations'])} | {total} | {desc} |")
             else:
-                rows.append(f"| [[{c['name']} (deprecated)]] | {c['source_type']} | {total} |")
+                rows.append(f"| [[{oname} (deprecated)]] | {c['source_type']} | {total} |")
         return "\n".join(rows)
 
     lines = [
@@ -781,11 +908,29 @@ def main():
         action="store_true",
         help="No actualizar el fichero INVENTORY.md."
     )
+    parser.add_argument(
+        "--rename-by-connectors",
+        action="store_true",
+        default=None,
+        dest="rename_by_connectors",
+        help=(
+            "Genera el nombre de salida a partir de los conectores "
+            "(p.ej. TCP_ADT-DB) en lugar de usar el nombre original del canal. "
+            "Sobreescribe 'rename_by_connectors' del config.json."
+        ),
+    )
     args = parser.parse_args()
 
     # Cargar configuracion
     cfg          = load_config(Path(args.config))
     replacements = cfg.get("replacements", {})
+
+    # rename_by_connectors: CLI tiene prioridad sobre config.json
+    rename_by_connectors = (
+        args.rename_by_connectors
+        if args.rename_by_connectors is not None
+        else cfg.get("rename_by_connectors", False)
+    )
 
     obsidian_str = args.obsidian or cfg.get("obsidian_dir")
     repo_str     = args.repo     or cfg.get("repo_dir")
@@ -816,45 +961,58 @@ def main():
         print(f"No se encontraron ficheros .xml en: {input_path}")
         sys.exit(1)
 
-    repl_summary = ", ".join(f"{k}->{v}" for k, v in replacements.items()) if replacements else "(ninguno)"
+    repl_summary  = ", ".join(f"{k}->{v}" for k, v in replacements.items()) if replacements else "(ninguno)"
+    rename_label  = "por conectores" if rename_by_connectors else "nombre original"
     print(f"\nMirth Extractor")
     print(f"  Input      : {input_path}")
     print(f"  Obsidian   : {obsidian_dir}")
     print(f"  Repo       : {repo_dir}")
     print(f"  Reemplazos : {repl_summary}")
+    print(f"  Nombrado   : {rename_label}")
     print(f"  XMLs       : {len(xml_files)} encontrados")
     print()
 
-    processed  = []
-    seen_names = set()
+    processed   = []
+    seen_names  = set()
+    used_names  = {}   # para deduplicacion cuando rename_by_connectors=True
 
     for xml_file in xml_files:
-        ch = process_file(xml_file, obsidian_dir, repo_dir, replacements, args.deprecated)
-        if ch and ch["name"] not in seen_names:
-            seen_names.add(ch["name"])
-            desc_full  = build_description(ch, replacements)
-            first_line = desc_full.splitlines()[0]
-            short      = first_line[:90] + "..." if len(first_line) > 90 else first_line
-            ch["total_scripts"] = _count_scripts(ch)
-            ch["desc_short"]    = short
-            ch["deprecated"]    = args.deprecated
-            processed.append(ch)
+        ch = process_file(
+            xml_file, obsidian_dir, repo_dir, replacements, args.deprecated,
+            rename_by_connectors=rename_by_connectors, used_names=used_names,
+        )
+        if ch:
+            key = ch.get("output_name", ch["name"])
+            if key not in seen_names:
+                seen_names.add(key)
+                desc_full  = build_description(ch, replacements)
+                first_line = desc_full.splitlines()[0]
+                short      = first_line[:90] + "..." if len(first_line) > 90 else first_line
+                ch["total_scripts"] = _count_scripts(ch)
+                ch["desc_short"]    = short
+                ch["deprecated"]    = args.deprecated
+                processed.append(ch)
 
     if input_path.is_dir():
         dep_dir = input_path / "Deprecated"
         if dep_dir.exists():
             print("\n  Deprecated:")
             for xml_file in sorted(dep_dir.glob("*.xml")):
-                ch = process_file(xml_file, obsidian_dir, repo_dir, replacements, deprecated=True)
-                if ch and ch["name"] not in seen_names:
-                    seen_names.add(ch["name"])
-                    desc_full  = build_description(ch, replacements)
-                    first_line = desc_full.splitlines()[0]
-                    short      = first_line[:90] + "..." if len(first_line) > 90 else first_line
-                    ch["total_scripts"] = _count_scripts(ch)
-                    ch["desc_short"]    = short
-                    ch["deprecated"]    = True
-                    processed.append(ch)
+                ch = process_file(
+                    xml_file, obsidian_dir, repo_dir, replacements, deprecated=True,
+                    rename_by_connectors=rename_by_connectors, used_names=used_names,
+                )
+                if ch:
+                    key = ch.get("output_name", ch["name"])
+                    if key not in seen_names:
+                        seen_names.add(key)
+                        desc_full  = build_description(ch, replacements)
+                        first_line = desc_full.splitlines()[0]
+                        short      = first_line[:90] + "..." if len(first_line) > 90 else first_line
+                        ch["total_scripts"] = _count_scripts(ch)
+                        ch["desc_short"]    = short
+                        ch["deprecated"]    = True
+                        processed.append(ch)
 
     if not args.no_inventory and processed:
         update_inventory(processed, obsidian_dir, repo_dir)
