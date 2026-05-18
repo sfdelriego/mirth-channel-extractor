@@ -1,42 +1,44 @@
+🌐 **English** | [Español](README.es.md)
+
 # 🏥 Mirth Channel Extractor
 
-> Convierte exportaciones XML de canales **Mirth Connect** en notas **markdown** estructuradas y un repositorio de **código JavaScript** reutilizable.
+> Converts **Mirth Connect** channel XML exports into structured **Markdown notes** and a reusable **JavaScript repository**.
 
-Ideal para equipos de integración sanitaria que quieren documentar, buscar y reutilizar la lógica de sus canales HL7/FHIR sin tener que abrir Mirth cada vez.
-
----
-
-## 🎯 ¿Para qué sirve?
-
-Si trabajas con **Mirth Connect** sabes que el código JavaScript de los filtros y transformers está "atrapado" dentro del XML de cada canal. Este script los extrae en fichero individuales para poder tener une repositorio y reutilizar código:
-
-- 📝 **Genera una nota markdown** por canal con descripción funcional, propiedades, configuración TCP, tipo de conectores y todo el código JS en bloques con syntax highlight
-- 🗂️ **Organiza el JavaScript** en ficheros `.js` separados por canal y componente (source transformer, filtros, destinations...)
-- 📋 **Crea un inventario** con tabla de todos los canales procesados
-- 🔒 **Elimina credenciales** automáticamente (IPs, passwords, usuarios) de las descripciones
-- 🏷️ **Anonimiza** el nombre del hospital si es algo habitual en el nombre de los canales para poder reutilizar la documentación en otros entornos
-- 🔀 **Nombrado flexible**: conserva el nombre original del canal (ideal para documentar) o genera un nombre basado en los conectores, p.ej. `TCP_ADT-DB` (ideal para base de conocimiento reutilizable)
-- ⚙️ **Extrae propiedades del canal**: estado inicial, almacenamiento de mensajes, fecha de última modificación, revisión...
-- 🔌 **Muestra la configuración TCP/MLLP**: modo de transmisión, puerto, codificación, conexiones máximas...
-- 🔁 **Documenta los operadores AND/OR** de los filtros con etiquetas visibles en la nota
-- ✅ Compatible con **Mirth Connect 3.x y 4.x** (soporta ambos formatos XML)
+Designed for healthcare integration teams who want to document, search and reuse their HL7/FHIR channel logic without opening Mirth every time.
 
 ---
 
-## 📋 Requisitos
+## 🎯 What does it do?
 
-- Python **3.8 o superior**
-- **Sin dependencias externas** — solo usa la librería estándar de Python
+If you work with **Mirth Connect** you know that JavaScript code in filters and transformers is "trapped" inside each channel's XML. This script extracts it into individual files so you can build a repository and reuse code:
+
+- 📝 **Generates a Markdown note** per channel — description, properties, TCP config, connector types and all JS code with syntax highlighting
+- 🗂️ **Organises JavaScript** into `.js` files per channel and component (source transformer, filters, destinations...)
+- 📋 **Creates an inventory** with a table of all processed channels
+- 🔒 **Strips credentials** automatically (IPs, passwords, usernames) from descriptions
+- 🏷️ **Anonymises** hospital names and system names via a replacements dictionary
+- 🔀 **Flexible naming**: keep the original channel name (good for documentation) or auto-generate from connector types, e.g. `TCP_ADT-DB` (good for a reusable knowledge base)
+- ⚙️ **Extracts channel properties**: initial state, message storage, last modified date, revision...
+- 🔌 **Shows TCP/MLLP config**: transmission mode, port, encoding, max connections...
+- 🔁 **Documents AND/OR filter operators** with visible tags in the note
+- ✅ Compatible with **Mirth Connect 3.x and 4.x** (auto-detects both XML formats)
+
+---
+
+## 📋 Requirements
+
+- Python **3.8 or later**
+- **No external dependencies** — standard library only
 
 ```bash
-python --version   # debe ser 3.8+
+python --version   # must be 3.8+
 ```
 
 ---
 
-## ⚙️ Configuración inicial
+## ⚙️ Initial setup
 
-Copia `config.example.json` a `config.json` y edita los valores:
+Copy `config.example.json` to `config.json` and edit the values:
 
 ```bash
 cp config.example.json config.json
@@ -44,89 +46,90 @@ cp config.example.json config.json
 
 ```json
 {
-  "obsidian_dir": "C:\\Vault\\Mirth\\Canales",
+  "obsidian_dir": "C:\\Notes\\Mirth\\Channels",
   "repo_dir":     "C:\\repos\\mirth-js",
 
   "rename_by_connectors": false,
 
   "replacements": {
-    "MiHospital":   "Hospital",
-    "MiSistemaHIS": "HIS",
-    "MiPACS":       "PACS"
+    "MyHospital":   "Hospital",
+    "MyHISSystem":  "HIS",
+    "MyPACS":       "PACS"
   }
 }
 ```
 
-El fichero `config.json` está en `.gitignore` y **nunca se sube al repositorio** — contiene rutas locales e información sensible de tu entorno.
+`config.json` is in `.gitignore` and **never committed** — it contains local paths and environment-specific information.
 
-El campo `replacements` es un diccionario de sustituciones que se aplican a los textos descriptivos (descripciones, nombres de steps...) pero **no** al código JavaScript. Útil para anonimizar el nombre de tu hospital, el HIS, el PACS, etc.
+| Field | Description |
+|---|---|
+| `obsidian_dir` | Output folder for Markdown notes |
+| `repo_dir` | Root folder for extracted JavaScript files |
+| `rename_by_connectors` | `false` (default): use the channel's original name. `true`: auto-generate name from connectors (see [Connector-based naming](#-connector-based-naming)) |
+| `replacements` | Dictionary of case-insensitive word substitutions applied to descriptions (not to JS code) |
 
-El campo `rename_by_connectors` controla cómo se nombran las notas y carpetas de salida (ver sección [Nombrado por conectores](#-nombrado-por-conectores) más adelante).
-
-> 💡 También puedes sobreescribir las rutas con argumentos de línea de comandos sin editar el fichero.
-
----
-
-## 🚀 Uso
-
-### Un solo canal
-
-```bash
-python mirth_extractor.py C:\exports\T_HOSPITAL_ADT.xml
-```
-
-### Una carpeta entera
-
-```bash
-python mirth_extractor.py C:\exports\canales\
-```
-
-> Si existe una subcarpeta `Deprecated\` dentro, se procesa automáticamente y las notas se etiquetan como deprecated.
-
-### Con rutas personalizadas (sobreescriben config.json)
-
-```bash
-python mirth_extractor.py C:\exports\canales\ --obsidian C:\vault\Mirth\ --repo C:\repos\mirth-js\
-```
-
-### Con fichero de configuración alternativo
-
-```bash
-python mirth_extractor.py canal.xml --config C:\configs\hospital_b.json
-```
-
-### Marcar canales como deprecated
-
-```bash
-python mirth_extractor.py canal_obsoleto.xml --deprecated
-```
-
-### Sin actualizar el inventario
-
-```bash
-python mirth_extractor.py canal.xml --no-inventory
-```
-
-### Nombrar por conectores (nombre generado automáticamente)
-
-```bash
-python mirth_extractor.py C:\exports\canales\ --rename-by-connectors
-```
-
-> Genera nombres como `TCP_ADT-DB`, `FR_SFTP-FW_SMB`, `HTTP-JS`... a partir del tipo de source y destinations. Si varios canales comparten el mismo patrón de conectores, se añade un sufijo numérico (`TCP_ADT-DB_1`, `TCP_ADT-DB_2`). También puede activarse en `config.json` con `"rename_by_connectors": true`.
+> 💡 All paths can be overridden with CLI arguments without editing the config file.
 
 ---
 
-## 📁 Estructura de salida
+## 🚀 Usage
 
-Con el comportamiento por defecto (`rename_by_connectors: false`) el nombre del canal se toma directamente del XML. Con `rename_by_connectors: true` se genera automáticamente a partir de los conectores.
+### Single channel
+
+```bash
+python mirth_extractor.py C:\exports\MyChannel.xml
+```
+
+### Entire folder
+
+```bash
+python mirth_extractor.py C:\exports\channels\
+```
+
+> If a `Deprecated\` subfolder exists inside, it is processed automatically and notes are tagged as deprecated.
+
+### Custom output paths (override config.json)
+
+```bash
+python mirth_extractor.py C:\exports\channels\ --obsidian C:\notes\Mirth\ --repo C:\repos\mirth-js\
+```
+
+### Alternative config file
+
+```bash
+python mirth_extractor.py channel.xml --config C:\configs\hospital_b.json
+```
+
+### Mark channels as deprecated
+
+```bash
+python mirth_extractor.py old_channel.xml --deprecated
+```
+
+### Skip inventory update
+
+```bash
+python mirth_extractor.py channel.xml --no-inventory
+```
+
+### Connector-based naming
+
+```bash
+python mirth_extractor.py C:\exports\channels\ --rename-by-connectors
+```
+
+> Generates names like `TCP_ADT-DB`, `FR_SFTP-FW_SMB`, `HTTP-JS`... from the source and destination connector types. Duplicate patterns get a numeric suffix (`TCP_ADT-DB_1`, `TCP_ADT-DB_2`). Can also be set in `config.json` with `"rename_by_connectors": true`.
+
+---
+
+## 📁 Output structure
 
 ```
-📂 Obsidian/Mirth/Canales/
+📂 notes/Mirth/Channels/
 │
-├── 📄 Canales Mirth - Inventario.md      ← tabla de todos los canales
+├── 📄 Canales Mirth - Inventario.md      ← channel inventory table
 │
-├── 📄 TCP_ADT-DB.md                      ← nota del canal (nombre original o por conectores)
+├── 📄 TCP_ADT-DB.md                      ← channel note
 ├── 📄 TCP_SIU-JS.md
 ├── 📄 FR_SFTP-DB.md
 └── 📄 HTTP-WS.md
@@ -152,13 +155,13 @@ Con el comportamiento por defecto (`rename_by_connectors: false`) el nombre del 
         └── 📄 source_transformer.js
 ```
 
-> 💡 En la carpeta [`channel-example/`](channel-example/) del repositorio encontrarás un canal de ejemplo completo: XML de exportación, nota markdown generada y ficheros JS.
+> 💡 The [`channel-example/`](channel-example/) folder contains a complete working example: export XML, generated Markdown note and JS files.
 
 ---
 
-## 📄 Ejemplo de nota markdown generada
+## 📄 Generated note example
 
-> Ver también el ejemplo completo en [`channel-example/TCP_ADT-DB.md`](channel-example/TCP_ADT-DB.md).
+> See the full example in [`channel-example/TCP_ADT-DB.md`](channel-example/TCP_ADT-DB.md).
 
 ````markdown
 ---
@@ -174,7 +177,6 @@ tags:
 | Propiedad | Valor |
 |---|---|
 | Almacenamiento mensajes | DEVELOPMENT |
-| Cifrar datos | false |
 | Estado inicial | STARTED |
 
 | Metadato | Valor |
@@ -186,8 +188,6 @@ tags:
 
 Example channel. Receives HL7 v2 ADT messages via TCP/MLLP,
 filters by event type and maps patient demographics to channel variables.
-Demonstrates: MLLP source, HL7 filter with AND/OR operators,
-demographic transformer and conditional multi-destination routing.
 
 ## Configuracion
 
@@ -205,9 +205,7 @@ demographic transformer and conditional multi-destination routing.
 | Parametro | Valor |
 |---|---|
 | Modo transmision | MLLP |
-| MLLP v2 | false |
 | Max conexiones | 10 |
-| Mantener conexion | true |
 | Codificacion | DEFAULT_ENCODING |
 
 ## Destinations
@@ -216,14 +214,6 @@ demographic transformer and conditional multi-destination routing.
 |---|---|---|---|---|---|
 | RegisterPatient | JavaScript Writer | HL7V2 | HL7V2 | ✓ | ✓ |
 | RecordAdmission | JavaScript Writer | HL7V2 | HL7V2 | ✓ | ✗ |
-
-## Scripts — Canal
-
-### Preprocessor
-
-```javascript
-return message;
-```
 
 ## Scripts — Source
 
@@ -244,76 +234,67 @@ return supported.indexOf(eventType) >= 0;
 ### Transformer: MapPatientDemographics
 
 ```javascript
-var nhc       = msg['PID']['PID.3']['CX.1'].toString();
-var lastName  = msg['PID']['PID.5']['XPN.1'].toString();
-var firstName = msg['PID']['PID.5']['XPN.2'].toString();
-var eventType = msg['MSH']['MSH.9']['MSG.2'].toString();
-channelMap.put('nhc',       nhc);
-channelMap.put('lastName',  lastName);
-channelMap.put('firstName', firstName);
-channelMap.put('eventType', eventType);
+var nhc = msg['PID']['PID.3']['CX.1'].toString();
+channelMap.put('nhc', nhc);
+channelMap.put('eventType', msg['MSH']['MSH.9']['MSG.2'].toString());
 ```
 
-## Scripts — RegisterPatient (JavaScript Writer)
-
-### Filter: Only A28/A31
-
-```javascript
-var ev = $('eventType');
-return ['A28', 'A31'].indexOf(ev) >= 0;
-```
-
-### JavaScript Writer Script
-
-```javascript
-var sql    = 'UPDATE PATIENTS SET FIRST_NAME=?, LAST_NAME=? WHERE PATIENT_ID=?';
-var params = java.util.Arrays.asList($('firstName'), $('lastName'), $('nhc'));
-// ...
-```
-
-**Codigo JS:** `C:\repos\mirth-js\TCP_ADT-DB`
+---
+**JS code:** `C:\repos\mirth-js\TCP_ADT-DB`
 ````
+
 ---
 
-## 🔐 Limpieza automática de credenciales
+## 🔀 Connector-based naming
 
-El script detecta y elimina automáticamente líneas que contengan:
+The `rename_by_connectors` option changes how output notes and JS folders are named:
 
-| Patrón detectado | Ejemplo |
+| Value | Behaviour | When to use |
+|---|---|---|
+| `false` (default) | Uses the original channel name from XML | Documenting channels with meaningful names |
+| `true` | Auto-generates name from connector types | Building a reusable pattern knowledge base |
+
+### Name format
+
+```
+{SOURCE}[_MSGTYPE]-{DEST1[_DEST2]}
+```
+
+- **SOURCE** — source connector abbreviation: `TCP`, `HTTP`, `WS`, `FR_SFTP`, `FR_SMB`, `FR_FTP`, `FR_LOCAL`, `DB`, `JS`, `CH`
+- **MSGTYPE** — HL7 message type detected in the original name: `ADT`, `SIU`, `ORM`, `ORU`, `MDM`...
+- **DEST** — destination connector abbreviation(s): `TCP`, `FW_SFTP`, `FW_SMB`, `DB`, `WS`, `JS`, `SMTP`, `CH`
+- More than 2 distinct destination types → `ROUTER`
+
+### Examples
+
+| Original name | Generated name |
 |---|---|
-| Direcciones IP | `10.116.128.138:4300` |
+| `T_HOSPITAL_InMillenniumADT` | `TCP_ADT-DB` |
+| `C_HOSPITAL_SMS_ALERTS` | `HTTP-SMTP` |
+| `E_HOSPITAL_WS_DEMOGRAPHICS` | `WS-DB` |
+| `T_HOSPITAL_SIU_PATIENTS` | `TCP_SIU-ROUTER` |
+| `Import_Files_SFTP` | `FR_SFTP-DB` |
+
+---
+
+## 🔐 Automatic credential removal
+
+The script detects and removes lines containing:
+
+| Pattern | Example |
+|---|---|
+| IP addresses | `10.116.128.138:4300` |
 | Passwords | `pwd: MyP@ss123` / `password: secret` |
-| Usuarios | `U: admin` / `login: mirth_user` |
-| Credenciales de entorno | `Produccion U: hismirth0123 P: xxxxx` |
+| Usernames | `U: admin` / `login: mirth_user` |
+| Environment credentials | `Produccion U: hismirth01 P: xxxxx` |
 
-> ⚠️ Siempre revisa las notas generadas antes de publicarlas. El script hace un primer filtro pero puede no cubrir todos los casos.
-
----
-
-## 🏷️ Anonimización y reemplazos
-
-El diccionario `replacements` de `config.json` permite sustituir cualquier término en los textos descriptivos, **sin tocar** los nombres técnicos de canales, variables ni bloques de código JavaScript:
-
-```json
-"replacements": {
-  "CentroHospitalario":       "Hospital",
-  "HISComercialName": "HIS"
-}
-```
-
-```
-"Integracion ADT HISComercialName - HPHIS en el CentroHospitalario"
-                     ↓
-"Integracion ADT HIS - HPHIS en el Hospital"
-```
-
-Puedes añadir tantas entradas como necesites (PACS, proveedor externo, región...). Los reemplazos son **insensibles a mayúsculas** y solo afectan a palabras completas.
+> ⚠️ Always review generated notes before publishing. The script does a first pass but may not catch every case.
 
 ---
 
-## 🔌 Conectores Mirth soportados
+## 🔌 Supported Mirth connectors
 
-| Tipo Mirth | Nombre en nota |
+| Mirth type | Note label |
 |---|---|
 | File (SFTP/FTP/SMB/local) | File Reader / File Writer |
 | TCP (MLLP/HL7) | TCP Listener / TCP Sender |
@@ -328,82 +309,47 @@ Puedes añadir tantas entradas como necesites (PACS, proveedor externo, región.
 
 ---
 
-## 🗺️ Formatos XML compatibles
+## 🗺️ Compatible XML formats
 
-Mirth Connect cambió el formato XML interno entre versiones:
+Mirth Connect changed its internal XML format between versions:
 
-| Versión | Formato transformers | Formato filtros |
+| Version | Transformers | Filters |
 |---|---|---|
-| **3.x antiguo** | `elements/JavaScriptStep` | `elements/JavaScriptRule` |
-| **3.x / 4.x nuevo** | `steps/step/script` | `rules/rule/script` |
+| **3.x old** | `elements/JavaScriptStep` | `elements/JavaScriptRule` |
+| **3.x / 4.x new** | `steps/step/script` | `rules/rule/script` |
 
-El script detecta automáticamente cuál usa cada canal y los procesa correctamente.
+The script auto-detects which format each channel uses.
 
 ---
 
-## 💡 Flujo de trabajo recomendado
+## 💡 Recommended workflow
 
 ```
-1. Abre el canal en Mirth Connect y entiende qué hace
-2. Exporta el canal: Admin → Export Channel → guarda el XML
-3. Ejecuta el script sobre el XML exportado
-4. Abre la nota markdown y mejora la descripción auto-generada
-5. (Opcional) Sube el repositorio JS a GitHub para compartirlo
+1. Open the channel in Mirth Connect and understand what it does
+2. Export it: Admin → Export Channel → save the XML
+3. Run the script on the exported XML
+4. Open the generated note and improve the auto-generated description
+5. (Optional) Push the JS repository to GitHub to share it
 ```
 
-> 📌 Si la descripción del canal en Mirth estaba vacía o era muy vaga, el script genera una automática basada en los conectores y nombres de steps. Aparece marcada con un callout `[!todo]` para que recuerdes revisarla.
+> 📌 If the channel description in Mirth was empty or too vague, the script generates one automatically from the connectors and step names. It is marked with a `[!todo]` callout so you remember to review it.
 
 ---
 
-## 🔀 Nombrado por conectores
+## 🤝 Contributing
 
-El campo `rename_by_connectors` (o la opción `--rename-by-connectors` en CLI) cambia el comportamiento de nombrado de las notas y carpetas JS generadas:
+Using this script at another hospital or integration team? Contributions welcome:
 
-| Valor | Comportamiento | Cuándo usarlo |
-|---|---|---|
-| `false` (default) | Usa el nombre original del canal en el XML | Documentar canales con nombres significativos |
-| `true` | Genera un nombre a partir de los conectores | Base de conocimiento de patrones reutilizables |
-
-### Formato del nombre generado
-
-```
-{SOURCE}[_MSGTYPE]-{DEST1[_DEST2]}
-```
-
-Donde:
-- `SOURCE` = abreviatura del conector de entrada: `TCP`, `HTTP`, `WS`, `FR_SFTP`, `FR_SMB`, `FR_FTP`, `FR_LOCAL`, `DB`, `JS`, `CH`
-- `MSGTYPE` = tipo de mensaje HL7 detectado en el nombre original: `ADT`, `SIU`, `ORM`, `ORU`, `MDM`...
-- `DEST` = abreviatura del/los conector/es de salida: `TCP`, `FW_SFTP`, `FW_SMB`, `DB`, `WS`, `JS`, `SMTP`, `CH`
-- Si hay más de 2 tipos distintos de destino → se usa `ROUTER`
-
-### Ejemplos
-
-| Nombre original | Nombre generado |
-|---|---|
-| `T_HOSPITAL_InMillenniumADT` | `TCP_ADT-DB` |
-| `C_HOSPITAL_SMS_ALERTAS` | `HTTP-SMTP` |
-| `E_HOSPITAL_WS_DEMOGRAFICOS` | `WS-DB` |
-| `T_HOSPITAL_SIU_PACIENTES` | `TCP_SIU-ROUTER` |
-| `Import_Ficheros_SFTP` | `FR_SFTP-DB` |
-
-Si varios canales comparten el mismo patrón, se añade sufijo numérico: `FR_SFTP-DB`, `FR_SFTP-DB_1`, `FR_SFTP-DB_2`...
+- 🐛 Open an issue if you find a channel that doesn't parse correctly
+- ✨ Pull requests to add new connector types or improve description generation
+- 🌍 If you adapt it for another integration engine (Rhapsody, Ensemble, etc.), share it
 
 ---
 
-## 🤝 Contribuciones
+## 📜 Licence
 
-¿Usas este script en otro hospital o entorno? Las contribuciones son bienvenidas:
-
-- 🐛 Abre un issue si encuentras un canal que no se parsea correctamente
-- ✨ Pull requests para añadir nuevos tipos de conectores o mejorar la generación de descripciones
-- 🌍 Si lo adaptas para otro sistema de integración (Rhapsody, Ensemble, etc.), compártelo
+MIT — free for personal and commercial use.
 
 ---
 
-## 📜 Licencia
-
-MIT — libre para uso personal y comercial.
-
----
-
-*Desarrollado para facilitar la vida a los equipos de integración sanitaria que trabajan con HL7, FHIR y Mirth Connect.* 🏥
+*Built to make life easier for healthcare integration teams working with HL7, FHIR and Mirth Connect.* 🏥
