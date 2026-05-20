@@ -1,6 +1,14 @@
 # Config personal — contiene rutas locales, NO subir al repo
 config.json
 
+# Carpeta de entrada — XMLs exportados de Mirth para procesar localmente
+input/*
+!input/.gitkeep
+
+# Notas y JS generados — se revisan antes de mover a Obsidian
+mirth-channels-repo/notes/*
+!mirth-channels-repo/notes/.gitkeep
+
 # Python
 __pycache__/
 *.py[cod]
